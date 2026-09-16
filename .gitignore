@@ -1,0 +1,39 @@
+# ── 构建缓存：可再生产，体积大（合计约 1.5 GB），不应进版本库 ──
+# 注意：gitignore 不支持行尾注释，# 必须独占一行，
+#       否则 # 之后的内容会被当成模式的一部分，规则静默失效
+.gradle-home/
+.flet-cache/
+.java-truststore/
+
+# ── build/ 的处理 ──
+# build/ 下全部是可再生产的产物：Flutter 工程、Gradle 输出、.dart_tool 等。
+#
+# 最终 APK 虽是交付物，但**刻意不纳入版本库**，原因：
+#   - 体积达 50 MB，且每次重新构建都会生成一个全新 blob（即使源码只改一行），
+#     git 会保留每个版本，仓库会迅速膨胀
+#   - 分发方式是**作为 GitHub Release 的附件上传**，仓库只保留构建配方
+#     （见 PROGRESS.md 第 9 节，含可复现的完整构建命令）
+#
+# 注：曾经想过"排除 build/ 再把 apk 加回来"，但 gitignore 不允许
+#     "排除整个目录后再把里面的文件加回来"（父目录被排除时 ! 规则无效），
+#     需写成 build/* → !build/apk/ → build/apk/* → !build/apk/*.apk 才行。
+build/
+
+# ── 开发环境与日志 ──
+.venv/
+.build.log
+
+# ── Python 字节码 ──
+__pycache__/
+*.py[cod]
+
+# ── 应用运行时数据 ──
+# 开发态若不慎未走 FLET_APP_STORAGE_DATA，会落到这里
+.devdata/
+
+# ── 编辑器 / 系统 ──
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

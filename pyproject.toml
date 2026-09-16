@@ -1,0 +1,50 @@
+[project]
+name = "class_schedule"
+version = "0.1.0"
+description = "课程表工具：周视图 + 单日视图，按周次过滤，可打包为 Android APK"
+# 锁定到与开发环境相同的小版本（开发机为 3.12.3）。
+# 原先写 ">=3.12,<3.14" 会让 Flet 选用 3.13 作为内置运行时，
+# 造成"开发在 3.12、设备在 3.13"的偏差 —— 这类不一致容易到真机上才暴露。
+# 3.12 / 3.13 / 3.14 都是 Flet 支持的版本，取与开发一致的那个。
+requires-python = ">=3.12,<3.13"
+# 不引入任何需要 Android 轮子的第三方库，把打包风险压到最低
+dependencies = ["flet"]
+
+[tool.flet]
+# 应用显示名（桌面窗口标题 / 启动器名称）
+product = "课程表"
+# 包名前缀，反域名格式
+org = "com.example"
+build_version = "0.1.0"
+build_number = 1
+# 只编 64 位 ARM，显著缩短构建时间；如需兼容更老的机型再加 armeabi-v7a
+target_arch = ["arm64-v8a"]
+# 图标背景色（图标素材本身带透明通道时透出该颜色）
+icon_background = "#1E88E5"
+
+[tool.flet.app]
+# 应用源码根目录：main.py 与其下的 core/、ui/ 包都相对这里
+path = "src"
+# 排除路径按 app path（即 src/）**精确匹配，不支持通配符**，
+# 因此嵌套的 __pycache__ 必须逐个列出，否则开发机编译出的 .pyc 会被打进包。
+exclude = [
+    ".flet",              # Flet 开发态运行时目录（临时文件与开发数据）
+    "__pycache__",        # 匹配 src/__pycache__
+    "core/__pycache__",   # 嵌套目录不会被上面的条目覆盖
+    "ui/__pycache__",
+]
+
+[tool.flet.android]
+# HarmonyOS 4.x 的内核 API level 远高于 24，24 只是放宽可安装下限
+min_sdk_version = 24
+target_sdk_version = 34
+
+[tool.flet.android.splash]
+color = "#FFFFFF"
+dark_color = "#121212"
+
+# 填住"Flutter 已就绪但 Python 尚未加载完"的那段空档，否则冷启动会看到空白
+[tool.flet.boot_screen.flet]
+prepare_message = "正在准备课程表…"
+startup_message = "正在启动…"
+spinner_size = 28

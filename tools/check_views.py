@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+"""视图构造自检：不需要浏览器，直接检查控件树是否符合预期。
+
+Flet 的控件本质是数据类，构造视图并不需要真实会话，因此可以在这里
+断言"课程块到底有没有被放进控件树、几何值是否合理"，
+把渲染问题与逻辑问题分开定位。
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+SRC = Path(__file__).resolve().parent.parent / "src"
+sys.path.insert(0, str(SRC))
+
+import flet as ft  # noqa: E402
+
+from seed_demo import build  # noqa: E402  同目录脚本，提供确定性的样本数据
+from state import AppState  # noqa: E402
+from ui.day_view import build_day_view  # noqa: E402
+from ui.settings_view import build_settings_view  # noqa: E402
+from ui import schedule_view  # noqa: E402
+
+
+class FakePage:
+    """只需要提供 width，其余接口视图层并不使用。"""
+
+    def __init__(self, width: float = 412.0) -> None:
+        self.width = width
+
+
+def walk(control: object, depth: int = 0):
+    """深度优先遍历控件树，产出 (depth, control)。"""
+    yield depth, control
+    for attr in ("controls", "content"):
+        value = getattr(control, attr, None)
+        if isinstance(value, list):
+            for child in value:
+                yield from walk(child, depth + 1)
+        elif value is not None and hasattr(value, "controls") is not None:
+            if hasattr(value, "__class__") and not isinstance(value, (str, int, float)):
+                yield from walk(value, depth + 1)
+
+
+def count_colored_blocks(root: object, colors: set[str]) -> list[tuple]:
+    """找出所有底色等于课程颜色的容器，即课程块。"""
+    found = []
+    for _depth, control in walk(root):
+        color = getattr(control, "bgcolor", None)
+        if isinstance(color, str) and color.upper() in colors:
+            found.append(
+                (
+                    color,
+                    getattr(control, "left", None),
+                    getattr(control, "top", None),
+                    getattr(control, "width", None),
+                    getattr(control, "height", None),
+                )
+            )
+    return found
+
+
+def find_labels(root: object) -> list[str]:
+    """收集所有文本内容，用来确认关键控件确实在树里。"""
+    labels = []
+    for _depth, control in walk(root):
+        value = getattr(control, "value", None)
+        if isinstance(control, ft.Text) and isinstance(value, str):
+            labels.append(value)
+        content = getattr(control, "content", None)
+        if isinstance(control, ft.Button) and isinstance(content, str):
+            labels.append(content)
+    return labels
+
+
+def main() -> int:
+    # 刻意使用内存中的固定样本，完全不读磁盘数据文件。
+    # 校验器必须自带数据，否则会因"开发数据是否存在"给出误导性的成败结果
+    # —— 之前就出现过无数据时退出码 1、被误读成校验失败的情况。
+    state = AppState()
+    state.data = build()
+
+    page = FakePage(412.0)
+    colors = {c.color.upper() for c in state.courses}
+
+    print(f"课程数 {len(state.courses)}，页面宽度 {page.width}，当前周 {state.current_week}")
+
+    problems: list[str] = []
+
+    # ---- 周视图 ----
+    week_view = schedule_view.build_schedule_view(
+        page, state, on_pick_day=lambda d: None, on_edit_course=lambda c: None
+    )
+    week_blocks = count_colored_blocks(week_view, colors)
+    expected = sum(len(b) for b in state.blocks_of_week(state.current_week).values())
+    print(f"\n周视图：期望课程块 {expected} 个，实际找到 {len(week_blocks)} 个")
+    for item in week_blocks:
+        print(f"  色 {item[0]} left={item[1]} top={item[2]} w={item[3]} h={item[4]}")
+    if len(week_blocks) != expected:
+        problems.append(f"周视图课程块数量不符：期望 {expected}，实际 {len(week_blocks)}")
+
+    # 几何值合理性
+    for _color, left, top, width, height in week_blocks:
+        if width is None or height is None or left is None or top is None:
+            problems.append("课程块存在未设置的几何属性")
+        elif width <= 0 or height <= 0:
+            problems.append(f"课程块尺寸非法: w={width} h={height}")
+        elif top < 0:
+            problems.append(f"课程块 top 为负: {top}")
+
+    # ---- 单日视图 ----
+    state.select_date(state.selected_date)
+    day_view = build_day_view(
+        page, state, on_add_at=lambda d, s: None, on_edit_course=lambda c: None
+    )
+    day_blocks = count_colored_blocks(day_view, colors)
+    expected_day = len(state.blocks_for(state.selected_date))
+    print(f"\n单日视图：期望课程块 {expected_day} 个，实际找到 {len(day_blocks)} 个")
+    for item in day_blocks:
+        print(f"  色 {item[0]} left={item[1]} top={item[2]} w={item[3]} h={item[4]}")
+    if len(day_blocks) != expected_day:
+        problems.append(f"单日视图课程块数量不符：期望 {expected_day}，实际 {len(day_blocks)}")
+
+    # 单日视图必须能看到每节起止时间
+    day_labels = find_labels(day_view)
+    if "08:00 08:45" not in day_labels:
+        problems.append("单日视图缺少节次时间显示")
+
+    # ---- 设置视图 ----
+    settings_view = build_settings_view(page, state)
+    settings_labels = find_labels(settings_view)
+    for needed in ("保存设置", "恢复默认时间", "各节起止时间"):
+        if needed not in settings_labels:
+            problems.append(f"设置视图缺少控件：{needed}")
+    print(f"\n设置视图：收集到 {len(settings_labels)} 个文案")
+    print("  结尾几个文案:", settings_labels[-5:] if settings_labels else "无")
+
+    print()
+    if problems:
+        print(f"发现 {len(problems)} 个问题：")
+        for item in problems:
+            print(f"  ✗ {item}")
+        return 1
+    print("视图构造自检通过")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
