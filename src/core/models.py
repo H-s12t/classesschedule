@@ -8,18 +8,29 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
 from core import config
 
+# 颜色只接受十六进制写法。界面上选色只能从 config.COLOR_PALETTE 里选，
+# 所以这里挡的是"被手改过或外部工具写过的数据文件" ——
+# 非法颜色会让 Flutter 渲染报错或整个课块变透明，属于看不见但很难排查的故障。
+_HEX_COLOR = re.compile(r"^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$")
+
 
 def _as_int(value: object, default: int) -> int:
-    """尽力把任意值转成 int，失败则返回默认值。"""
+    """尽力把任意值转成 int，失败则返回默认值。
+
+    除了 TypeError / ValueError，还必须接 OverflowError：
+    JSON 规范不允许 Infinity / NaN，但 **Python 的 json 默认能解析它们**，
+    而 int(float("inf")) 抛的正是 OverflowError。
+    """
     try:
         return int(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
 
 
@@ -27,6 +38,21 @@ def _as_str(value: object, default: str = "") -> str:
     if value is None:
         return default
     return str(value)
+
+
+def _as_list(value: object) -> list:
+    """只接受 list / tuple，其余归为空列表。
+
+    **不能写成 `list(value or [])`**：数字或字符串也是"可迭代"或"]非空真值"，
+    例如 {"courses": 123} 会在 list() 或 for 上抛 TypeError，
+    直接导致应用每次启动都崩在读取阶段。
+    """
+    return list(value) if isinstance(value, (list, tuple)) else []
+
+
+def _as_dict(value: object) -> dict:
+    """只接受 dict，其余归为空字典（参见 _as_list 的注释）。"""
+    return value if isinstance(value, dict) else {}
 
 
 def _parse_iso_date(value: object) -> date | None:
@@ -38,6 +64,16 @@ def _parse_iso_date(value: object) -> date | None:
         return datetime.strptime(text, "%Y-%m-%d").date()
     except ValueError:
         return None
+
+
+def session_note_key(day: date | str, course_id: str) -> str:
+    """单节课备注的字典键："YYYY-MM-DD|course_id"。
+
+    一门课只属于一个 weekday，所以"某天 + 某课"必定唯一确定一节课，
+    不需要再拼节次 —— 否则用户改了课节时间，旧备注就成了找不到主人的孤儿。
+    """
+    text = day.isoformat() if isinstance(day, date) else _as_str(day)
+    return f"{text}|{course_id}"
 
 
 @dataclass
@@ -129,7 +165,7 @@ class SemesterSettings:
             total_weeks=_as_int(data.get("total_weeks"), config.DEFAULT_TOTAL_WEEKS),
             start_date=_as_str(data.get("start_date")),
             slots_per_day=_as_int(data.get("slots_per_day"), config.DEFAULT_SLOTS_PER_DAY),
-            slot_times=list(data.get("slot_times") or []),
+            slot_times=_as_list(data.get("slot_times")),
         )
         settings.normalize()
         return settings
@@ -146,6 +182,8 @@ class Course:
     weeks: list[int] = field(default_factory=list)
     location: str = ""
     teacher: str = ""
+    # 课程级备注：默认作用于这门课的所有上课时间（与单节课备注并存显示）
+    note: str = ""
     color: str = config.DEFAULT_COURSE_COLOR
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
 
@@ -170,6 +208,7 @@ class Course:
         self.name = self.name.strip() or "未命名课程"
         self.location = self.location.strip()
         self.teacher = self.teacher.strip()
+        self.note = self.note.strip()[: config.MAX_NOTE_LENGTH]
 
         self.weekday = min(max(_as_int(self.weekday, 1), 1), 7)
         self.start_slot = min(max(_as_int(self.start_slot, 1), 1), slots_per_day)
@@ -183,7 +222,8 @@ class Course:
                 weeks.add(number)
         self.weeks = sorted(weeks)
 
-        if not self.color:
+        self.color = self.color.strip()
+        if not _HEX_COLOR.match(self.color):
             self.color = config.DEFAULT_COURSE_COLOR
         if not self.id:
             self.id = uuid.uuid4().hex[:12]
@@ -198,6 +238,7 @@ class Course:
             "weeks": list(self.weeks),
             "location": self.location,
             "teacher": self.teacher,
+            "note": self.note,
             "color": self.color,
         }
 
@@ -209,9 +250,10 @@ class Course:
             weekday=_as_int(data.get("weekday"), 1),
             start_slot=_as_int(data.get("start_slot"), 1),
             end_slot=_as_int(data.get("end_slot"), 1),
-            weeks=list(data.get("weeks") or []),
+            weeks=_as_list(data.get("weeks")),
             location=_as_str(data.get("location")),
             teacher=_as_str(data.get("teacher")),
+            note=_as_str(data.get("note")),
             color=_as_str(data.get("color")) or config.DEFAULT_COURSE_COLOR,
             id=_as_str(data.get("id")) or uuid.uuid4().hex[:12],
         )
@@ -220,10 +262,14 @@ class Course:
 
 @dataclass
 class ScheduleData:
-    """整个学期数据的根对象：设置 + 课程列表。"""
+    """整个学期数据的根对象：设置 + 课程列表 + 单节课备注。"""
 
     settings: SemesterSettings = field(default_factory=SemesterSettings)
     courses: list[Course] = field(default_factory=list)
+    # 单节课备注：键为 "YYYY-MM-DD|course_id"（见 session_note_key）。
+    # 与 Course.note（课程级）**并存**，界面上两条都显示。
+    # 用稀疏字典而不是给每个日期开字段：一学期只有少数几节课需要额外备注。
+    notes: dict[str, str] = field(default_factory=dict)
     version: int = 1
 
     # ---- 课程增删改 ----
@@ -253,7 +299,26 @@ class ScheduleData:
         if course is None:
             return False
         self.courses.remove(course)
+        # 课程没了，它名下的单节课备注也就没有意义了
+        self.notes = {
+            key: value for key, value in self.notes.items() if not key.endswith(f"|{course_id}")
+        }
         return True
+
+    # ---- 单节课备注 ----
+
+    def get_session_note(self, day: date, course_id: str) -> str:
+        """某天某节课的备注（没有则返回空串）。"""
+        return self.notes.get(session_note_key(day, course_id), "")
+
+    def set_session_note(self, day: date, course_id: str, text: str) -> None:
+        """设置某天某节课的备注；传空即删除该键，避免文件里积一堆空串。"""
+        key = session_note_key(day, course_id)
+        cleaned = text.strip()[: config.MAX_NOTE_LENGTH]
+        if cleaned:
+            self.notes[key] = cleaned
+        else:
+            self.notes.pop(key, None)
 
     def next_color(self) -> str:
         """按已有课程数轮转取色，让相邻新增的课颜色尽量不同。"""
@@ -267,11 +332,24 @@ class ScheduleData:
         for course in self.courses:
             course.normalize(slots)
 
+        # 备注重整：丢掉空值，以及课程已不存在的孤儿键
+        known_ids = {course.id for course in self.courses}
+        cleaned_notes: dict[str, str] = {}
+        for key, value in (self.notes or {}).items():
+            text = _as_str(value).strip()
+            if not text:
+                continue
+            if key.rsplit("|", 1)[-1] not in known_ids:
+                continue
+            cleaned_notes[str(key)] = text[: config.MAX_NOTE_LENGTH]
+        self.notes = cleaned_notes
+
     def to_dict(self) -> dict:
         return {
             "version": self.version,
             "settings": self.settings.to_dict(),
             "courses": [course.to_dict() for course in self.courses],
+            "notes": dict(self.notes),
         }
 
     @classmethod
@@ -279,7 +357,10 @@ class ScheduleData:
         data = raw if isinstance(raw, dict) else {}
         schedule = cls(
             settings=SemesterSettings.from_dict(data.get("settings")),
-            courses=[Course.from_dict(item) for item in (data.get("courses") or [])],
+            courses=[Course.from_dict(item) for item in _as_list(data.get("courses"))],
+            # 备注值统一转成字符串，键也转成 str：
+            # 否则 normalize() 里的 key.rsplit() 会拿到非 str 而报错
+            notes={str(key): _as_str(value) for key, value in _as_dict(data.get("notes")).items()},
             version=_as_int(data.get("version"), 1),
         )
         schedule.normalize()

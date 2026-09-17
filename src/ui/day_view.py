@@ -24,6 +24,7 @@ def build_day_view(
     state: AppState,
     on_add_at: Callable[[date, int], None],
     on_edit_course: Callable[[Course], None],
+    on_edit_note: Callable[[date, Course], None],
 ) -> ft.Control:
     settings = state.settings
     slots = settings.slots_per_day
@@ -86,7 +87,7 @@ def build_day_view(
         spacing=8,
         controls=[
             ft.Button(content="回到今天", icon=ft.Icons.TODAY, on_click=back_to_today),
-            ft.Text("点空白节次可直接新增", size=10, color=ft.Colors.GREY_700),
+            ft.Text("单击课程块改本节备注，长按改课程", size=10, color=ft.Colors.GREY_700),
         ],
     )
 
@@ -151,12 +152,20 @@ def build_day_view(
 
     children.extend(layout.horizontal_separators(row_height, slots, body_width))
 
-    # 课程块后加，因此浮在命中区域之上：点课程块是编辑，点空白是新增
+    # 课程块后加，因此浮在命中区域之上：点课程块是编辑备注，长按是编辑课程，点空白是新增
     blocks = state.blocks_for(day)
     for block in blocks:
+        lesson: Course = block["course"]
         children.append(
             layout.course_block(
-                block, body_width, row_height, on_click=on_edit_course, detailed=True
+                block,
+                body_width,
+                row_height,
+                on_click=lambda target, d=day: on_edit_note(d, target),
+                on_long_press=on_edit_course,
+                detailed=True,
+                # 两条备注并存：课程级的通用说明 + 这一节的临时补充
+                notes=(lesson.note, state.session_note(day, lesson)),
             )
         )
 

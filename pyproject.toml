@@ -16,7 +16,7 @@ product = "课程表"
 # 包名前缀，反域名格式
 org = "com.example"
 build_version = "0.1.0"
-build_number = 1
+build_number = 3
 # 只编 64 位 ARM，显著缩短构建时间；如需兼容更老的机型再加 armeabi-v7a
 target_arch = ["arm64-v8a"]
 # 图标背景色（图标素材本身带透明通道时透出该颜色）

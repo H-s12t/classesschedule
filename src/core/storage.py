@@ -20,6 +20,43 @@ from core.models import ScheduleData
 # 由 main.py 在拿到系统应用目录后注入；为空时走回退逻辑
 _data_dir: Path | None = None
 
+# 上一次 load() 的重置原因。为空表示读取正常。
+# 为什么要有这个：损坏时 storage 只能自己重置数据（不能崩），
+# 但"课表被静默清空"是这类工具最糟的失败方式，所以必须让界面能把它报出来。
+last_load_warning: str | None = None
+
+
+def _quarantine(path: Path) -> Path | None:
+    """把读不懂的文件改名留档，绝不让"读取失败"演变成"数据被静默覆盖"。
+
+    只保留一份备份就够：重置后写出的文件一定合法，不会连续发生。
+    """
+    target = path.with_suffix(path.suffix + config.CORRUPT_SUFFIX)
+    try:
+        path.replace(target)
+        return target
+    except OSError:
+        return None
+
+
+def _damage_reason(raw: object) -> str | None:
+    """结构层面明显不对劲时返回原因，否则 None。
+
+    为什么不能只看"能不能解析"：合法 JSON 也可能字段类型全错，
+    而 from_dict 会"平静地"返回一份空数据 —— 用户看不到任何异常，课表却空了。
+    静默清空是这类工具最糟的失败方式，所以这种情形必须和解析失败一样隔离 + 告知。
+    本应用自己写出的文件永远满足下面的形状，因此判定不会误伤正常数据。
+    """
+    if not isinstance(raw, dict):
+        return "顶层不是对象"
+    if "courses" in raw and not isinstance(raw["courses"], (list, tuple)):
+        return "courses 不是列表"
+    if "settings" in raw and not isinstance(raw["settings"], dict):
+        return "settings 不是对象"
+    if "notes" in raw and not isinstance(raw["notes"], dict):
+        return "notes 不是对象"
+    return None
+
 
 def set_data_dir(path: str | os.PathLike[str] | None) -> None:
     """显式指定数据目录（打包运行时由 StoragePaths 提供）。"""
@@ -98,7 +135,21 @@ def data_file() -> Path:
 
 
 def load() -> ScheduleData:
-    """读取数据；文件不存在或损坏时返回一份带默认值的新数据。"""
+    """读取数据；文件不存在或损坏时返回一份带默认值的新数据。
+
+    两条失败路径都要走这里，而且**一条都不能把异常放出去**：
+      1. 文件不是合法 JSON / 不是 UTF-8 → 解析期就抛
+      2. 文件是合法 JSON 但**字段类型不对** → from_dict 期才抛
+         （例："notes": "abc" 会让 dict() 报 ValueError）
+
+    第 2 条最容易漏：异常发生在解析之后，如果让它冒到 main()，
+    应用会**每次启动都崩在同一处**，而用户从界面里无法自救 ——
+    只能清空应用数据，等于丢掉整个课表。这是在手机上最不能接受的失败方式，
+    所以这里一律兜住，并把原因记到 last_load_warning 供界面展示。
+    """
+    global last_load_warning
+    last_load_warning = None
+
     path = data_file()
     if not path.exists():
         fresh = ScheduleData()
@@ -107,17 +158,19 @@ def load() -> ScheduleData:
 
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-        # 坏文件改名留档，绝不让"读取失败"演变成"数据被清空且无法追溯"
-        try:
-            path.replace(path.with_suffix(path.suffix + config.CORRUPT_SUFFIX))
-        except OSError:
-            pass
+        damage = _damage_reason(raw)
+        if damage:
+            raise ValueError(f"数据结构异常：{damage}")
+        return ScheduleData.from_dict(raw)
+    except Exception as exc:  # noqa: BLE001 —— 读取失败绝不能影响启动
+        backup = _quarantine(path)
+        reason = f"{type(exc).__name__}: {exc}".replace("\n", " ")[:80]
+        last_load_warning = f"数据文件无法读取（{reason}），已重置为空课表" + (
+            f"，原文件已备份为 {backup.name}" if backup else "，且原文件未能备份"
+        )
         fresh = ScheduleData()
         fresh.normalize()
         return fresh
-
-    return ScheduleData.from_dict(raw)
 
 
 def save(data: ScheduleData) -> None:

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from datetime import date
 
@@ -145,6 +146,25 @@ def build_schedule_view(
     # 12 节在手机上放不下，必须可纵向滚动
     grid = ft.Column(spacing=0, expand=True, scroll=ft.ScrollMode.AUTO, controls=[body])
 
+    # ---------------- 翻页入场动画 ----------------
+    # refresh() 会整体重建本视图，旧画面此时已经不存在，所以做不了
+    # "旧滑出 + 新滑入"的双画面效果，只能让新内容自己从侧面滑进来；
+    # 外层裁剪框负责遮挡起始位置，否则偏移出去的网格会溢出到导航栏上。
+    slide_from = state.take_slide()
+    slider: ft.Container | None = None
+    if slide_from:
+        slider = ft.Container(
+            content=grid,
+            expand=True,
+            offset=ft.Offset(slide_from, 0),
+            animate_offset=ft.Animation(config.PAGE_SLIDE_MS, ft.AnimationCurve.EASE_OUT),
+        )
+        stage = ft.Container(
+            content=slider, expand=True, clip_behavior=ft.ClipBehavior.HARD_EDGE
+        )
+    else:
+        stage = ft.Container(content=grid, expand=True)
+
     # ---------------- 横向滑动翻页 ----------------
     # 只累加横向位移，超过阈值才翻页，避免和纵向滚动抢手势
     drag_tracker = {"dx": 0.0}
@@ -169,7 +189,7 @@ def build_schedule_view(
         on_horizontal_drag_start=on_drag_start,
         on_horizontal_drag_update=on_drag_update,
         on_horizontal_drag_end=on_drag_end,
-        content=grid,
+        content=stage,
     )
 
     # ---------------- 周次导航条 ----------------
@@ -219,6 +239,20 @@ def build_schedule_view(
             ft.Text("点某天可切到单日视图", size=10, color=ft.Colors.GREY_700),
         ],
     )
+
+    # 起始偏移一旦渲染出来就立刻归零，动画随之播放。
+    # 用 run_task 而不是同步改值：同步改会与本次构建的 update 合并为一次提交，
+    # 起始偏移就永远不会被渲染，动画会被静默跳过。
+    if slider is not None:
+
+        async def _play_slide() -> None:
+            await asyncio.sleep(config.PAGE_SLIDE_SETTLE_DELAY)
+            if not layout.is_on_page(slider):
+                return
+            slider.offset = ft.Offset(0, 0)
+            slider.update()
+
+        page.run_task(_play_slide)
 
     return ft.Column(
         spacing=6,

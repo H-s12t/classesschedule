@@ -20,7 +20,7 @@ from ui import layout
 from ui.week_picker import WeekPicker
 
 _FORM_MAX_WIDTH = 340
-_FORM_MAX_HEIGHT = 430
+_FORM_MAX_HEIGHT = 470
 # 对话框还要容纳标题与按钮行，内容区最多占页面高度的这个比例
 _FORM_HEIGHT_RATIO = 0.70
 
@@ -69,6 +69,7 @@ def open_course_form(
         init_end = course.end_slot
         init_location = course.location
         init_teacher = course.teacher
+        init_note = course.note
         init_color = course.color
         init_weeks = list(course.weeks)
     else:
@@ -78,6 +79,7 @@ def open_course_form(
         init_end = int(prefill.get("end_slot", init_start))
         init_location = ""
         init_teacher = ""
+        init_note = ""
         init_color = state.next_course_color()
         # 新增课程默认整学期都上，用户再按需取消，比从零开始勾更省事
         init_weeks = list(prefill.get("weeks") or range(1, settings.total_weeks + 1))
@@ -134,6 +136,19 @@ def open_course_form(
         label="任课教师",
         value=init_teacher,
         text_size=14,
+        border=layout.input_border(),
+    )
+
+    # 课程级备注：默认作用于这门课的**所有**上课时间（与单日视图里的单节备注并存）
+    note_field = ft.TextField(
+        label=f"{config.NOTE_MARK_COURSE}备注",
+        value=init_note,
+        text_size=14,
+        multiline=True,
+        min_lines=2,
+        max_lines=3,
+        max_length=config.MAX_NOTE_LENGTH,
+        hint_text="默认作用于这门课的所有上课时间，例如：需带计算器",
         border=layout.input_border(),
     )
 
@@ -217,6 +232,7 @@ def open_course_form(
                 controls=[ft.Container(content=location_field, expand=True),
                           ft.Container(content=teacher_field, expand=True)],
             ),
+            note_field,
             ft.Text("课程颜色", size=13, weight=ft.FontWeight.W_500),
             color_row,
             ft.Divider(height=1),
@@ -265,6 +281,7 @@ def open_course_form(
             weeks=weeks,
             location=(location_field.value or "").strip(),
             teacher=(teacher_field.value or "").strip(),
+            note=(note_field.value or "").strip(),
             color=selected_color[0],
         )
         if is_edit:

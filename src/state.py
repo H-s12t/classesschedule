@@ -24,6 +24,10 @@ class AppState:
         self._listeners: list[Callable[[], None]] = []
         # 一次性提示文案：由界面在下次刷新建构时取走并显示
         self._flash: str | None = None
+        # 一次性翻页方向（+1 下一周 / -1 上一周 / 0 非翻页），供周视图做入场动画。
+        # 与 _flash 同样是**一次性**的：视图取走后立即清零，
+        # 否则尺寸变化、增删课程引起的重建也会重放动画。
+        self._pending_slide: int = 0
 
     # ------------------------------------------------------------------ #
     # 订阅与广播
@@ -46,6 +50,10 @@ class AppState:
         """从磁盘装载数据，并把选中日期夹进学期范围。"""
         self.data = storage.load()
         self.clamp_selected()
+        # 数据文件读不懂时 storage 会重置为空白课表。
+        # 必须让用户看见：静默把课表清空是最糟的失败方式。
+        if storage.last_load_warning:
+            self._flash = storage.last_load_warning
 
     def persist(self) -> bool:
         """落盘并广播；返回是否成功写入磁盘。
@@ -157,8 +165,37 @@ class AppState:
 
         刻意走"日期 ±7 天"这条路而不是直接改周次，
         这样同一天在星期几上的位置保持不变，视觉上更符合直觉。
+
+        同时记下方向，供周视图决定新内容从哪一侧滑入。
         """
         self.shift_days(weeks * 7)
+        self._pending_slide = 1 if weeks > 0 else -1
+
+    def take_slide(self) -> int:
+        """取走一次性的翻页方向。
+
+        返回 +1（向后 / 下一周）、-1（向前 / 上一周）或 0（本次重建与翻页无关）。
+        取走后即清零，保证动画只在真正翻页时播放一次。
+        """
+        direction, self._pending_slide = self._pending_slide, 0
+        return direction
+
+    # ------------------------------------------------------------------ #
+    # 单节课备注
+    # ------------------------------------------------------------------ #
+
+    def session_note(self, day: date, course: Course) -> str:
+        """某天某节课的备注（没有则返回空串）。
+
+        与 `course.note`（课程级、作用于所有上课时间）**并存**，
+        界面上两条都显示 —— 前者是"这门课的通用说明"，后者是"这次课的临时补充"。
+        """
+        return self.data.get_session_note(day, course.id)
+
+    def set_session_note(self, day: date, course: Course, text: str) -> bool:
+        """设置某天某节课的备注；传空即清除。落盘并广播，返回是否写入成功。"""
+        self.data.set_session_note(day, course.id, text)
+        return self.persist()
 
     def can_shift_week(self, delta: int) -> bool:
         """翻到目标周之后是否仍在学期内（用于按钮禁用态）。"""

@@ -60,9 +60,14 @@ def parse_weeks(text: str, max_weeks: int = 999) -> list[int]:
                 low, high = int(range_match.group(1)), int(range_match.group(2))
                 if low > high:
                     low, high = high, low
-                candidates = range(low, high + 1)
+                # **先夹到 max_weeks 再展开**：手滑写成 "1-999999999" 时
+                # range 会生成上亿个值，循环能把界面卡死（手机上就是 ANR）
+                low = max(low, 1)
+                high = min(high, max_weeks)
+                candidates = range(low, high + 1) if low <= high else range(0)
             elif single_match:
-                candidates = range(int(single_match.group(1)), int(single_match.group(1)) + 1)
+                only = int(single_match.group(1))
+                candidates = range(only, only + 1) if 1 <= only <= max_weeks else range(0)
             else:
                 continue  # 认不出来就跳过这一段
 

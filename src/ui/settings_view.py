@@ -10,7 +10,7 @@ from datetime import date, timedelta
 import flet as ft
 
 from core import config, storage
-from core.models import SemesterSettings
+from core.models import Course, SemesterSettings
 from state import AppState
 from ui import layout
 
@@ -168,9 +168,72 @@ def build_settings_view(page: ft.Page, state: AppState) -> ft.Control:
             slot_times=slot_times,
         )
         updated.normalize()
-        # 落盘 + 广播，界面随之重建，新值即为反馈
-        state.update_settings(updated)
+
+        # 把节数改小会把超出范围的课**就地压扁**（Course.normalize 会把 end_slot
+        # 夹到 slots_per_day），而且是立即落盘的 —— 改回去也恢复不了。
+        # 这是本应用唯一还会"静默丢数据"的路径，所以动手前必须让用户看清代价。
+        # 按超出程度倒序：损失最大的排最前，才能让用户一眼看出该不该继续。
+        squeezed = sorted(
+            (c for c in state.courses if c.end_slot > updated.slots_per_day),
+            key=lambda c: (-c.end_slot, c.name),
+        )
+        if squeezed:
+            confirm_squeeze(updated, squeezed)
+            return
+        apply(updated)
+
+    def apply(settings: SemesterSettings) -> None:
+        """真正落盘 + 广播，界面随之重建，新值即为反馈。"""
+        state.update_settings(settings)
         state.set_flash("学期设置已保存")
+
+    def confirm_squeeze(settings: SemesterSettings, squeezed: list[Course]) -> None:
+        """节数变小会压扁课程，先把代价摆出来再让用户决定。"""
+
+        def do_apply(_event: ft.ControlEvent) -> None:
+            page.pop_dialog()
+            apply(settings)
+
+        def do_cancel(_event: ft.ControlEvent) -> None:
+            page.pop_dialog()
+            # 不刷新的话，表单会停留在已被拒绝的"每天节数"上，
+            # 看着像已经改了。给个提示并让界面回到已保存的值。
+            state.set_flash("已取消，学期设置未改动")
+
+        listed = "、".join(f"{c.name}（第{c.start_slot}-{c.end_slot}节）" for c in squeezed[:3])
+        if len(squeezed) > 3:
+            listed += f" 等共 {len(squeezed)} 门"
+
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("有课程会被压缩"),
+            content=ft.Column(
+                spacing=8,
+                controls=[
+                    ft.Text(
+                        f"每天节数改成 {settings.slots_per_day} 后，这些课超出了最后一节，"
+                        "会被压缩到范围内：",
+                        size=13,
+                    ),
+                    ft.Text(listed, size=13, weight=ft.FontWeight.W_500),
+                    ft.Text(
+                        "被压掉的那几节信息会永久丢失，之后把节数改回来也恢复不了。",
+                        size=12,
+                        color="#C62828",
+                    ),
+                ],
+            ),
+            actions=[
+                ft.TextButton(content="取消", on_click=do_cancel),
+                ft.Button(
+                    content="仍要保存",
+                    bgcolor=ft.Colors.RED,
+                    color=ft.Colors.WHITE,
+                    on_click=do_apply,
+                ),
+            ],
+        )
+        page.show_dialog(dialog)
 
     # ---- 组装 ----
 
@@ -181,6 +244,14 @@ def build_settings_view(page: ft.Page, state: AppState) -> ft.Control:
         scroll=ft.ScrollMode.AUTO,
         controls=[
             ft.Text("学期设置", size=18, weight=ft.FontWeight.BOLD),
+            # 版本放在最顶部，而不是页尾：它存在的意义就是"一眼确认装的是哪一版"，
+            # 放在需要滚动才够得着的地方等于没有（实测就因此被误判成"没装上"）。
+            ft.Text(
+                f"版本 {config.APP_VERSION}（build {config.APP_BUILD}）",
+                size=12,
+                color=ft.Colors.GREY_700,
+                selectable=True,
+            ),
             weeks_field,
             ft.Row(
                 spacing=8,

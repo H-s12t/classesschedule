@@ -23,6 +23,10 @@ build/
 .venv/
 .build.log
 
+# tools/package_android.sh 会把产物拷回 dist/ —— 同样是 50 MB 级的 APK，
+# 与 build/ 一样刻意不进版本库（分发走 Release 附件）
+dist/
+
 # ── Python 字节码 ──
 __pycache__/
 *.py[cod]
@@ -30,6 +34,11 @@ __pycache__/
 # ── 应用运行时数据 ──
 # 开发态若不慎未走 FLET_APP_STORAGE_DATA，会落到这里
 .devdata/
+
+# Flet 开发态注入的私有目录：`flet run <app_path>` 时 FLET_APP_STORAGE_DATA
+# 指向 <app_path>/.flet/storage/data，也就是 src/.flet/storage/data。
+# 里面是真实的课程表 JSON（会随使用不断变化），绝对不能进版本库。
+.flet/
 
 # ── 编辑器 / 系统 ──
 .vscode/

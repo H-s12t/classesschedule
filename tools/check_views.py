@@ -74,6 +74,28 @@ def find_labels(root: object) -> list[str]:
     return labels
 
 
+def count_long_pressable(root: object, colors: set[str]) -> int:
+    """统计同时接了长按回调的课程块数量（单日视图靠长按进课程编辑）。"""
+    total = 0
+    for _depth, control in walk(root):
+        color = getattr(control, "bgcolor", None)
+        if isinstance(color, str) and color.upper() in colors:
+            if callable(getattr(control, "on_long_press", None)):
+                total += 1
+    return total
+
+
+def count_split_blocks(root: object, colors: set[str]) -> int:
+    """统计用了「左侧信息 / 右侧备注」两列布局的课程块数量。"""
+    total = 0
+    for _depth, control in walk(root):
+        color = getattr(control, "bgcolor", None)
+        if isinstance(color, str) and color.upper() in colors:
+            if isinstance(getattr(control, "content", None), ft.Row):
+                total += 1
+    return total
+
+
 def main() -> int:
     # 刻意使用内存中的固定样本，完全不读磁盘数据文件。
     # 校验器必须自带数据，否则会因"开发数据是否存在"给出误导性的成败结果
@@ -112,7 +134,11 @@ def main() -> int:
     # ---- 单日视图 ----
     state.select_date(state.selected_date)
     day_view = build_day_view(
-        page, state, on_add_at=lambda d, s: None, on_edit_course=lambda c: None
+        page,
+        state,
+        on_add_at=lambda d, s: None,
+        on_edit_course=lambda c: None,
+        on_edit_note=lambda d, c: None,
     )
     day_blocks = count_colored_blocks(day_view, colors)
     expected_day = len(state.blocks_for(state.selected_date))
@@ -126,6 +152,45 @@ def main() -> int:
     day_labels = find_labels(day_view)
     if "08:00 08:45" not in day_labels:
         problems.append("单日视图缺少节次时间显示")
+
+    # ---- 备注：课程级与单节备注必须同时出现在课程块里 ----
+    # 直接改内存数据、不走 persist()，免得校验器往开发数据文件里写脏数据
+    first_id = state.blocks_for(state.selected_date)[0]["course"].id
+    target = next(c for c in state.data.courses if c.id == first_id)
+    target.note = "CHECK课程备注"
+    state.data.set_session_note(state.selected_date, first_id, "CHECK单节备注")
+
+    day_view = build_day_view(
+        page,
+        state,
+        on_add_at=lambda d, s: None,
+        on_edit_course=lambda c: None,
+        on_edit_note=lambda d, c: None,
+    )
+    day_labels = find_labels(day_view)
+    print(f"\n备注：带标记的文案 {[t for t in day_labels if 'CHECK' in t]}")
+    for needed in ("CHECK课程备注", "CHECK单节备注"):
+        if not any(needed in label for label in day_labels):
+            problems.append(f"单日视图课程块缺少备注文案：{needed}")
+
+    long_pressable = count_long_pressable(day_view, colors)
+    print(f"  接入长按的课程块 {long_pressable}/{len(day_blocks)}")
+    if long_pressable != len(day_blocks):
+        problems.append("单日视图存在未接长按的课程块（无法从课块进课程编辑）")
+
+    # ---- 宽屏：备注应该挪进块内右侧那块本来就要空着的区域 ----
+    wide_view = build_day_view(
+        FakePage(760.0),
+        state,
+        on_add_at=lambda d, s: None,
+        on_edit_course=lambda c: None,
+        on_edit_note=lambda d, c: None,
+    )
+    wide_blocks = len(count_colored_blocks(wide_view, colors))
+    wide_split = count_split_blocks(wide_view, colors)
+    print(f"\n宽屏 760：课程块 {wide_blocks} 个，其中用两列布局的 {wide_split} 个")
+    if wide_blocks and wide_split != wide_blocks:
+        problems.append(f"宽屏下仍有课块把备注堆在课名下面（{wide_split}/{wide_blocks}）")
 
     # ---- 设置视图 ----
     settings_view = build_settings_view(page, state)

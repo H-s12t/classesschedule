@@ -40,6 +40,22 @@ async def main(page: ft.Page) -> None:
     # 挂载完成后才允许 update()，这一步同时完成首帧渲染
     shell.on_mounted()
 
+    # 异常兜底：手机上用户看不到任何日志，若异常只打到控制台，
+    # 表现就是"点了没反应"，既无法自救也无法反馈。这里把它变成界面上看得见的一行字。
+    #
+    # 次数上限是必须的：报错处理本身若也抛异常，会经 on_error 再次进来，
+    # 变成停不下来的递归。给个预算，花完就彻底安静。
+    error_budget = [3]
+
+    def handle_error(event: ft.ControlEvent) -> None:
+        if error_budget[0] <= 0:
+            return
+        error_budget[0] -= 1
+        detail = str(getattr(event, "data", "") or "").replace("\n", " ").strip()
+        shell.state.set_flash(f"出现错误：{detail[:120]}" if detail else "出现未知错误")
+
+    page.on_error = handle_error
+
     state.subscribe(shell.refresh)
     page.on_resize = shell.on_resize
     page.update()

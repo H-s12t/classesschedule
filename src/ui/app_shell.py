@@ -17,6 +17,7 @@ from state import AppState
 from ui import layout
 from ui.course_form import open_course_form
 from ui.day_view import build_day_view
+from ui.note_form import open_note_form
 from ui.schedule_view import build_schedule_view
 from ui.settings_view import build_settings_view
 
@@ -112,7 +113,11 @@ class AppShell:
     def _render_tab(self) -> None:
         if self.tab == TAB_DAY:
             view: ft.Control = build_day_view(
-                self.page, self.state, self._add_course_at, self._edit_course
+                self.page,
+                self.state,
+                self._add_course_at,
+                self._edit_course,
+                self._edit_note,
             )
         elif self.tab == TAB_SETTINGS:
             view = build_settings_view(self.page, self.state)
@@ -153,6 +158,13 @@ class AppShell:
 
     def _edit_course(self, course: Course) -> None:
         open_course_form(self.page, self.state, course=course)
+
+    def _edit_note(self, day: date, course: Course) -> None:
+        """单击单日视图的课程块：编辑"这一天这节课"的备注。
+
+        长按才进课程编辑，两者互不干扰：单击改备注是高频动作，长按改课程是低频动作。
+        """
+        open_note_form(self.page, self.state, day, course)
 
     # ------------------------------------------------------------------ #
     # 窗口尺寸变化

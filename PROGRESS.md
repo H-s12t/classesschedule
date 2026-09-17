@@ -285,7 +285,23 @@ StoragePaths 不可用
 10. 真机 API level 预检（`adb shell getprop ro.build.version.sdk`）
 11. Phase 6 打包与真机验证
 12. ~~处理 4.3 中剩余的 R5、R8~R13~~ ✅ 已处理（R5/R8/R10/R11 修复；R9/R12/R13 已定处置方式，见 4.4）
-13. 待构建完成后**重新构建一次**，确保 APK 包含本轮源码改动（工具链已就绪后重建只需 1~3 分钟）
+13. ~~待构建完成后重新构建一次，确保 APK 包含本轮源码改动~~ ✅ 已完成（现有 build 3，见第 17 轮）
+
+**当前未完成（按优先级）**
+
+1. 🔴 **真机安装疑似无效**（见 9.6）：用户多次安装、卸载重装后手机仍跑最初版本。
+   已加入"设置页显示版本号"作为可判定锚点，待用户装 build 3 后回报结果。
+   若仍不行，排查方向转为传输/安装路径本身（最可疑：同名旧文件未覆盖、
+   或从 GitHub Release 下载了旧附件）
+2. 🟠 **删除三层嵌套的自身副本**（见 9.7）：`class_schedule/` 向下三层，
+   共约 6 个旧文件副本（含 `src/` 与 `pyproject.toml`）。
+   原因已定位且已加护栏，但删除属破坏性操作，**先征求用户同意**
+3. 🟠 **Release 附件仍是第 10 轮那一版**（见 9.5）：需要把 build 3 的
+   `class_schedule.apk` + `.sha1` 重新上传（建议用唯一命名，避免下载端缓存旧文件）
+4. 🟡 **安全审计剩余待决策项**（见第 16 轮）：B1 release 用 debug 签名、
+   B2 INTERNET/ACCESS_NETWORK_STATE 权限、B3 打包了 16 个无用插件、
+   B4 `allowBackup` 默认 true、B6 临时目录静默回退、B7 未 fsync 目录、
+   B8/B9 返回手势未处理
 
 ### 4.3 风险检查结果（2026-09-16，逐项有代码位置佐证）
 
@@ -367,10 +383,25 @@ R9、R12、R13 **已评估并决定处置方式**（见 4.4）。
 - 影响：容易被误读成"校验失败"，实际只是前置数据缺失
 - 建议：无数据时自行调用 seed 逻辑，或作为"跳过"并返回 0
 
-#### R8 · 可用性 · 12 节 × 7 列在竖屏下每列约 44px
+#### R8 · 可用性 · 12 节 × 7 列在竖屏下每列约 44px ✅ 已处置（接受折行换大字号）
 
 - 课程块内只放得下课名，地点与教师由单日视图承担（已按此设计）
-- 真机上仍需确认实际可读性
+- **空间硬约束**（手机 390px 实测计算）：
+
+  ```
+  content_width = 390 - 10*2 - 8 = 362
+  column_width  = (362 - 46) / 7 = 45.1px
+  文字可用宽     = 45.1 - 8(块内边距) = 37px
+  ⇒ 4 个汉字单行显示要求字号 ≤ 37/4 = 9.25px
+  ```
+
+- **最终方案**（用户选定）：接受周视图课名折行，换取更大字号（各 +2）。
+  现取值：课名 **12 / 11 / 10**（按列宽分档）、单日视图 **14**；
+  地点 **10**、单日详情与节次 **12**
+- **代价**：手机上 4 字课名不再单行显示。示例数据均为多节连排（1-2 / 3-4 / 5-6 节），
+  块高充足，折行后仍完整可读；仅"单节 + 长课名"会显局促
+- **已实测验证**（浏览器 390×844）：单日视图层次清晰无截断；周视图折行但不丢字
+- 注：只要字号 >9px 就必然折行，**这是每列 45px 的空间决定的，调参无法绕过**
 
 #### R9 · 交互 · 横向滑动翻页与纵向滚动的竞争
 
@@ -849,8 +880,13 @@ cmd.exe /C "...\sdkmanager.bat --sdk-root=... --licenses < D:\class_schedule\.sd
 # 启动应用（桌面热重载模式）
 ./.venv/bin/flet run src
 
-# 打包 APK（在 WSL 内）
-bash tools/package_android.sh
+# 核验 APK 产物（每次打包后必做，重点看 sitepackages.zip 里有没有 flet）
+./.venv/bin/python build/verify_apk.py
+
+# 打包 APK：用 9.2 里那条完整命令（必须带那一组环境变量）
+#   ⚠️ 不要用 tools/package_android.sh —— 它把工程同步到 $HOME/build 再构建，
+#      不带 FLET_CACHE_DIR / GRADLE_USER_HOME 等变量，会退化成冷构建（40–60 分钟）；
+#      而且它的 BUILD_ROOT 指错时会把工程拷进自己的子目录（见 9.7）
 ```
 
 ### 6.3 数据文件位置
@@ -897,7 +933,8 @@ bash tools/package_android.sh
 │       ├── layout.py        共用布局工具与课程块渲染（两视图共用）
 │       ├── schedule_view.py 周视图
 │       ├── day_view.py      单日视图
-│       ├── course_form.py   课程新增/编辑表单
+│       ├── course_form.py   课程新增/编辑表单（含课程级备注）
+│       ├── note_form.py     单节课备注弹层
 │       ├── week_picker.py   周次多选组件
 │       └── settings_view.py 学期设置
 └── tools/
@@ -940,6 +977,24 @@ Flet 打包后的应用退出时进程会**立即终止**，`atexit`、`__del__`
 换来的是不存在"数据变了但某个控件忘了同步"这类问题。仅设置页例外
 （其中的输入框在编辑过程中不应被重建覆盖）。
 
+### 8.5 翻页动画为什么只能做"单侧滑入"
+
+`refresh()` 会整体重建视图（见 8.4），旧画面在动画开始前就已丢弃，
+所以做不出"旧内容滑出 + 新内容滑入"的双画面效果。
+可实现的方式只有：让新内容带着一个起始偏移先被渲染，再动画归零。
+
+两个必须注意的点：
+
+- **起始偏移必须先真正渲染出一帧**，否则 Flutter 会把两次变更合并成一次提交，
+  起始值永远不会被绘制，动画被静默跳过。所以用 `page.run_task` 延迟
+  `PAGE_SLIDE_SETTLE_DELAY`（50ms）再改值，而不是同步改
+- **偏移必须裁剪**，否则滑入时网格会溢出到导航栏上
+  （外层容器用 `ClipBehavior.HARD_EDGE`）
+
+代价：滑动过程中，旧内容本该在的位置会短暂露出页面背景。
+若日后想做真正的双画面滑动，需要把翻页改成"视图内部动画 + 动画结束后再提交状态"，
+而不能走 `refresh()` 全量重建这条路。
+
 ---
 
 ## 9. 打包与真机验证（进行中）
@@ -965,14 +1020,20 @@ cd /mnt/d/class_schedule
 
 # 注意：必须写 ${WSLENV}（带花括号）。写成 $WSLENV:XXX 会被 zsh 当成参数修饰符
 # （:F / :G / :P / :J 都是合法修饰符）—— 见 4.4 的 R24
-export WSLENV="${WSLENV}:FLET_CACHE_DIR/w:JAVA_TOOL_OPTIONS:GRADLE_USER_HOME/w:PYTHONUTF8:PYTHONIOENCODING"
+export WSLENV="${WSLENV}:FLET_CACHE_DIR/w:JAVA_TOOL_OPTIONS:GRADLE_USER_HOME/w:PYTHONUTF8:PYTHONIOENCODING:SERIOUS_PYTHON_DART_BRIDGE_DIST/w"
 export FLET_CACHE_DIR='D:\class_schedule\.flet-cache'
-export JAVA_TOOL_OPTIONS='-Djavax.net.ssl.trustStore=D:\class_schedule\.java-truststore\cacerts -Djavax.net.ssl.trustStorePassword=changeit'
+export JAVA_TOOL_OPTIONS='-Djavax.net.ssl.trustStore=D:\class_schedule\.java-truststore\cacerts -Djavax.net.ssl.trustStorePassword=changeit -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=7892 -Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=7892'
 export GRADLE_USER_HOME='D:\class_schedule\.gradle-home'
+export SERIOUS_PYTHON_DART_BRIDGE_DIST='D:\class_schedule\.flet-cache\dart-bridge\v1.9.0'
 export PYTHONUTF8=1
 export PYTHONIOENCODING=utf-8
 
-flet build apk --yes --no-rich-output -v
+# ⚠️ 日志必须重定向到文件，**不要 `| tail`**：tail 会把根因一起截掉。
+#    本轮就因此白跑了两次构建（只看到 BUILD FAILED，根因被丢掉）。
+/mnt/c/Users/H/AppData/Local/Programs/Python/Python312/Scripts/flet.exe \
+  build apk --yes --no-rich-output -v > build/build.log 2>&1
+# 失败时这样看关键片段：
+grep -n -i "FAILURE\|What went wrong\|Execution failed\|Caused by" build/build.log | head -30
 ```
 
 每一项的必要性（按踩坑顺序）：
@@ -984,16 +1045,20 @@ flet build apk --yes --no-rich-output -v
 | `WSLENV` | **WSL 不向 Windows 进程传递任意环境变量，且丢弃是静默的** | R19、R24 |
 | `PYTHONUTF8` / `PYTHONIOENCODING` | 必须**经 WSLENV** 才能到达；否则 rich 回显 Gradle 输出时崩溃 | R26 |
 | `FLET_CACHE_DIR` | 缓存落到工程内，同时满足约束与镜像预置 | R19 |
-| `JAVA_TOOL_OPTIONS` | Java 不认 MITM 根证书，需指向工程内信任库 | R22 |
+| `JAVA_TOOL_OPTIONS` | Java 不认 MITM 根证书，需指向工程内信任库；**并带上代理**（WSL 有 `http_proxy`，Windows 侧 JVM 默认没有，见 9.2.1） | R22 |
 | `GRADLE_USER_HOME` | Gradle 缓存/init 脚本/守护进程日志都放工程内 | R23、R25 |
+| `SERIOUS_PYTHON_DART_BRIDGE_DIST` | 指向本地 dart-bridge 目录后，插件**根本不注册** `downloadDartBridge_*` 任务，彻底不需要 github（源码里就是 `if (dartBridgeDist == null) dependsOn(...)`） | 9.2.1 |
 
 **前置条件**（不满足会在不同阶段失败）：
 
-- [ ] `github.com` 可达（见 9.2.1）
+- [ ] `github.com` 可达 —— **用本地 dart-bridge 后这一项已不再是硬性要求**，
+      仅 Android 运行时的条件请求还可能用到（见 9.2.1）
 - [ ] Windows 已开**开发人员模式**（见 R20）
 - [ ] Android SDK 已接受许可证，且 `MINIMAL_PACKAGES` 均已安装（见 R21）
 - [ ] `.gradle-home/gradle.properties` 中有 `kotlin.incremental=false`（见 R25）
 - [ ] `.gradle-home/init.d/` 无遗留干预脚本；若曾改过则会走国内 Maven 镜像
+- [ ] `.gradle-home/wrapper/dists/gradle-8.14-all/` 下**原站 URL 哈希目录**已预置完整发行包
+      （zip + 解压目录 + `.zip.ok`，见 9.2.2）
 
 构建完成后的成功输出：
 
@@ -1004,31 +1069,57 @@ flet build apk --yes --no-rich-output -v
 │ Successfully built your .apk for Android!  Find it in build\apk directory. │
 ```
 
-状态（2026-09-17 00:18 记录，**已成功产出**）：
+状态（2026-09-17 15:02 记录，**build 3 已产出并核验**）：
 
 | 组件 | 状态 |
 |---|---|
 | Flutter SDK 3.44.8 | ✅ 已装（`C:\Users\H\flutter`，3.3 GB） |
 | JDK 17.0.13+11 | ✅ 已装（`C:\Users\H\java`，305 MB） |
 | Android SDK | ✅ 已装（`C:\Users\H\Android\sdk`，590 MB，含 NDK 2.1 GB） |
-| GitHub 连通性 | ✅ 已通（Steam++ 加速已开启，见 R19） |
+| dart-bridge / Gradle 发行包 | ✅ 已缓存在工程内，**构建不再依赖 github**（见 9.2.1 / 9.2.2） |
 | Windows 开发人员模式 | ✅ 已开启（见 R20） |
 | 依赖安装 | ✅ `Installing [flet] ...`（见 R27） |
-| Gradle 构建 | ✅ `assembleRelease` 耗时 62 秒 |
-| **APK 产物** | ✅ **`build/apk/class_schedule.apk`（50 MB，552 个条目）** |
+| Gradle 构建 | ✅ `assembleRelease` 耗时 **26 秒**（本地 dart-bridge 生效后） |
+| **APK 产物** | ✅ **`build/apk/class_schedule.apk`（50.0 MB，552 个条目，SHA1 `c4306eec…`）** |
+| ⚠️ 真机安装 | **未验证通过** —— 用户多次安装后手机仍跑最初版本，见 9.6 |
 
-**单次完整构建耗时参考**：热缓存（Gradle 依赖、NDK、运行时均已就位）下约 **1–2 分钟**；
-冷启动（首次）约 **40–60 分钟**，其中绝大部分耗在网络下载。
+**单次完整构建耗时参考**：热缓存（Gradle 依赖、NDK、运行时、dart-bridge 均已就位）下
+约 **30 秒–2 分钟**；冷启动（首次）约 **40–60 分钟**，其中绝大部分耗在网络下载。
 
-#### 9.2.1 构建的前置条件：github.com 必须可达 ⚠️
+#### 9.2.1 关于 github.com 可达性
 
-**这不是可选项。** Flutter/Gradle 阶段有两个硬编码到 github.com 的下载：
+**现状（2026-09-17 15:02）：硬依赖已基本消除。**
+用本地 dart-bridge 目录后，`downloadDartBridge_*` 任务**不再被注册**，
+构建对 github 的硬依赖消失，实测构建从 443 秒降到 **26 秒**。
+但仍建议保持加速开启 —— Android 运行时（`downloadDistArchive_*`，
+带 ETag 条件请求）可能仍会发请求。
 
-- Android 运行时 `python-android-dart-<ver>-<abi>.tar.gz`
-  （Gradle 任务 `downloadDistArchive_*`，带 ETag 条件请求，**无法用环境变量绕过**）
-- dart-bridge `libdart_bridge-android-<abi>-py<ver>.so`
-  （可用 `SERIOUS_PYTHON_DART_BRIDGE_DIST` 跳过，
-  但需同时用 `WSLENV` 才能把变量传进去，见 4.4 的 R19）
+**踩坑记录：为什么会出现"WSL 能连 github、Gradle 却超时"**
+
+- 现象：6 个 `downloadDartBridge_<abi>` 任务失败，
+  `HttpHostConnectException: Connect to https://github.com:443 [20.205.243.166] failed: Connection timed out`，
+  且在 **24 秒**内快速失败
+- 而同一时刻 WSL 里 `curl https://github.com` 返回 **HTTP 200、连接耗时 0.7ms**
+- 两边解析到**同一个 IP**，行为却相反 ⇒ 不是 DNS 问题
+- 根因：WSL 环境里有 `http_proxy=http://127.0.0.1:7892`，
+  **而 Windows 侧的 JVM 默认不走代理**。0.7ms 的连接本身也说明 WSL 走的是本地代理，
+  不是真实外网往返
+- 处置：`JAVA_TOOL_OPTIONS` 追加
+  `-Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=7892`（及 http 同名项）
+
+`dart-bridge` 那一路还有一个更彻底的开关（插件源码
+`serious_python_android/android/build.gradle.kts:396-417`）：
+
+```kotlin
+val dartBridgeDist = System.getenv("SERIOUS_PYTHON_DART_BRIDGE_DIST")
+val bridgeFile = if (dartBridgeDist != null)
+    File(dartBridgeDist, "libdart_bridge-android-$abi-py$pythonVersion.so")
+...
+if (dartBridgeDist == null) dependsOn("downloadDartBridge_$abi")
+```
+
+即：**只要该变量指向一个含对应命名 .so 的目录，下载任务就根本不会被注册**。
+`.flet-cache/dart-bridge/v1.9.0/` 下已有三个 ABI 的 .so，直接指过去即可。
 
 **排查一台机器是否具备条件**（一条命令）：
 
@@ -1042,8 +1133,26 @@ FastGithub 之类的代理工具写的（见 4.4 的 R19）。
 **正确做法是让该工具真正开启加速**（而不是停在半开状态），
 或管理员权限清理 hosts 后 `ipconfig /flushdns`。
 
-**重要**：本次构建启动之后又修改了 `src/` 与 `pyproject.toml`（R5/R8/R10/R11 的修复），
-所以**最终交付以工具链就绪后重新构建的产物为准**，本次结果不作为交付物。
+#### 9.2.2 Gradle 发行包也会被"重置"（R23 复发，已永久规避）
+
+改 `pyproject.toml`（例如 `build_number`）会让 flet **重新生成 Flutter 工程**，
+把 `gradle-wrapper.properties` 的 `distributionUrl` 从腾讯镜像改回 `services.gradle.org`。
+wrapper 按 **URL 哈希**找缓存 → 原站哈希目录里没有完整发行包 → 去下载 224 MB，
+实测 **46 KB/s**（≈1.3 小时），**443 秒后构建失败**。
+
+- 现象识别：栈里出现 `org.gradle.wrapper.Download.downloadInternal`；
+  且 `.gradle-home/wrapper/dists/gradle-8.14-all/` 下多出一个哈希目录，里面只有 `.part`
+- **处置（比恢复镜像更稳）**：把已下好的完整发行包（zip + 解压目录 + `.zip.ok` 标记）
+  **预置到原站 URL 对应的哈希目录** `c2qonpi39x1mddn7hk5gh9iqj`。
+  这样无论 flet 之后把配置改成什么，wrapper 都能命中缓存，**不再依赖镜像也不会复发**
+- 处置后构建 56 秒（对比失败那次 443 秒）
+- 通用教训：**`pyproject.toml` 一改就可能触发工程重生成，从而重置工程内的构建配置**。
+  能放到 `GRADLE_USER_HOME` 或缓存侧的修正，就不要留在会被重写的工程文件里
+
+**重要（已过时，保留作历史）**：第 10 轮那次构建启动之后又修改了 `src/` 与 `pyproject.toml`，
+所以当时的结果不作为交付物。
+**当前交付物是 build 3**（`build/apk/class_schedule.apk`，SHA1 `c4306eec…`），
+见第 17 轮与 9.6。
 
 ### 9.3 装到手机
 
@@ -1116,15 +1225,105 @@ gh release create v0.1.0 \
 GitHub 仓库页 → Releases → Draft a new release → 填 tag `v0.1.0` →
 把 `D:\class_schedule\build\apk\class_schedule.apk` 拖进附件区 → Publish。
 
-**⚠️ 本机网络注意事项**：WSL 里 `github.com` 被 hosts 指向 `127.0.0.1`
-（见 4.4 的 R19），所以 **WSL 侧直接跑 `gh` 会连不上**。三个可行做法：
-
-- 用**方式二**（浏览器在 Windows 侧，走已开启的代理，正常）
-- 或在 **Windows 侧**安装并运行 `gh`（Windows 侧经代理可访问 github.com）
-- 若必须用 WSL 的 git 推送，需先解决 hosts 指向问题（R19）
+**⚠️ 本机网络注意事项（2026-09-17 15:00 复核，与早期记录不同）**：
+hosts 里**已无 github 条目**（`grep -c github /mnt/c/Windows/System32/drivers/etc/hosts` → 0），
+`getent hosts github.com` 返回真实 IP（20.205.243.166）。
+WSL 侧经 `http_proxy=127.0.0.1:7892` 可正常访问 github（实测 HTTP 200）。
+**但 Windows 侧的 JVM 默认不走代理** —— 那是构建时的坑（见 9.2.1），与上传无关。
+上传仍建议用**方式二（浏览器）**：WSL 里没有 `gh` CLI。
 
 **为什么 `.sha1` 也一起上传**：它是 APK 的校验值，下载后可核对完整性。
 两个文件都应该随 release 走，而不是进版本库。
+
+### 9.6 ⚠️ 真机安装疑似无效（未解决）
+
+**症状**：用户把新构建的 APK 装到手机后，应用行为仍是最初版本的特征
+（没有版本号显示、单日里单击课程块弹的是「编辑课程」而不是「本节课备注」、
+没有翻页动画）。**卸载后重装也一样。**
+
+**为什么这必然是安装环节的问题**：一次全新安装不可能装出旧代码 ——
+包里的 Python 代码是全新的（已核验 `assets/app.zip` 内含 `ui/note_form.pyc`，
+且能从 `core/config.pyc` 读出 `0.1.0`、从 `ui/settings_view.pyc` 读出 `版本`）。
+
+**已排除的可能**
+
+- ~~APK 内容不对~~：逐项核验通过（见第 17 轮）
+- ~~打包用错了源码~~：构建日志显示 `Copying Python app from D:\class_schedule\src` ✅
+- ~~插件复用旧解压结果~~：读 `serious_python_android` 源码，它用
+  `versionName+versionCode+lastUpdateTime` 做键，**`lastUpdateTime` 每次重装都变**，
+  所以重装必然重新解压 `app.zip`；插件注释里还专门说明了为什么不能用单纯的 versionCode
+
+**剩余嫌疑**：传输环节留了同名旧副本，或从 GitHub Release 下载了旧附件
+（**Release 上的附件至今仍是第 10 轮那一版**）。
+
+**已加入的可判定锚点**：设置页显示版本号（build 3 在**页面最顶部**），
+装后一眼就能确认装的是哪一版；另一个零成本判定是单击课程块看弹哪个标题。
+
+**教训（写给自己）**：我曾据"APK 内容正确 + 插件会重新解压"就断定
+"新代码已在手机上运行"，**这个结论是错的**。
+**核验 APK 内容必要但不充分** —— 我从没验证过设备上装的是什么。
+
+### 9.7 ✅ 已清理：工程内曾出现多层嵌套的自身副本
+
+（2026-09-17 15:30 清理完成，共回收 **11 GB**）
+
+**实际深度是 7 层，不是 3 层。** 删除时 Windows 报出的路径是：
+
+```
+D:\class_schedule\class_schedule\…\class_schedule\.gradle-home\caches\8.14\transforms
+   （共 7 个 class_schedule）
+```
+
+原因：`rsync` 没排除 `.git` / `.gradle-home` / `.flet-cache`，
+而它又把**上一次已经嵌套进来的副本**一起复制 —— 每跑一次就多一层并翻倍体积，
+所以从"三层"迅速长到七层、**11 GB**。
+原始目录时间 13:52–13:55，在护栏加入（14:00）之前。
+
+**危害**：副本里有 `src/` 与 `pyproject.toml`。
+**若从那一层构建或运行，跑的就是 13:52 的旧代码** ——
+这类"改了代码却没生效"极其难排查。
+
+**清理过程踩到的坑（值得记住）**
+
+1. **WSL 的 `rm -rf` 删不掉最深的一层**：报
+   `rm: cannot remove '…transforms': Directory not empty`。
+   这是 DrvFs 上 **Windows `MAX_PATH`(260 字符) 限制**的典型症状 —— 不是权限问题，
+   路径太长时 `rm` 无法枚举/删除里面的文件。
+2. **Windows 原生 `rmdir /s /q` 也失败**（同样报"目录不是空的"），
+   但 `cmd` 的退出码仍是 0 —— **别信这个退出码**。
+3. **最终奏效的办法：逐级把内层目录"提升"到顶层并改成短名**，路径长度骤降后再删：
+
+   ```bash
+   n=0; cur=class_schedule
+   while [ -d "$cur" ] && [ -d "$cur/class_schedule" ]; do
+     n=$((n+1))
+     mv "$cur/class_schedule" "short$n" && rmdir "$cur" 2>/dev/null
+     cur="short$n"
+   done
+   for d in short*; do rm -rf "$d"; done
+   ```
+
+   提升 5 层后 `rm -rf` 成功。
+   **通用结论：DrvFs 上遇到"删不掉的深目录"，先想办法缩短路径，而不是反复重试删除。**
+
+**已加的护栏**（14:00 实测通过）：`TARGET_DIR` 先 `realpath -m` 归一化 →
+与源目录相同则拒绝 → **两个方向的包含关系分别拒绝**
+（构建目录在源目录内 = 自我递归；源目录在构建目录内 = `rm -rf` 会连工程一起删）。
+注意：**第一版护栏把方向写反了**，是跑测试才发现的 —— 没测过的护栏比没有更危险。
+
+**清理结果**：根目录已无 `class_schedule/`，全工程只有一个 `PROGRESS.md`；
+66 项自测与控件树校验均通过；`build/apk/` 下的产物未受影响。
+
+**教训（归入"从部分证据推出完整结论"这一类）**
+
+- 我先据目录层级判定"三层"，**实际是七层**
+- 我又据 `get_terminal_output` 的一份**截断快照**判定"第一次清理没跑完"，
+  实际它跑完了（只是我看不到后面的输出）
+- 同类错误本轮已发生三次：
+  ① "APK 内容正确 ⇒ 手机上就是新代码"（错）
+  ② 用 `| tail` 截断构建输出 ⇒ 看不到根因，白跑两次
+  ③ 从截断的终端快照 ⇒ 误判命令未执行
+- **共同点：把"我能看到的片段"当成了"事实的全部"。**
 
 ## 10. 变更记录
 
@@ -1288,3 +1487,346 @@ GitHub 仓库页 → Releases → Draft a new release → 填 tag `v0.1.0` →
   `.gitignore` 里 `build/` 整目录排除，版本库只留源码与文档
 - 最终未忽略的未跟踪文件共 **24 个**：`.gitignore`、`PROGRESS.md`、`pyproject.toml`、
   `src/**`（15 个）、`tools/**`（6 个）
+
+### 第 13 轮 · 课程块字号调大两号
+
+- 用户要求"课程字体调大两号"，`layout.py` 中课块内**所有**字号统一 +2：
+  课名 8/9/10 → 10/11/12（按列宽分档）、单日视图 12 → 14、
+  周视图地点 8 → 10、单日详情与节次 10 → 12
+- **实测验证**（浏览器 390×844，真机尺寸）：
+  - 单日视图：层次清晰、无截断 ✅
+  - 周视图：4 字课名不再单行显示，折行但**不丢字**
+- **发现的空间硬约束**：手机上周视图每列仅 45.1px，文字可用宽 37px，
+  而 4 个汉字单行需字号 ≤ 9.25px。**因此只要 >9px 就必然折行**，
+  与具体取值无关，调参绕不过去 —— 详见 4.3 的 R8
+- **用户选定方案 A**：接受折行，保留大字号（真机可读性优先）
+- 教训：窄列 + 大字是硬碰硬的空间冲突，应当先算出断点（9.25px）再决定，
+  而不是反复试参数
+
+### 第 14 轮 · 周次切换的滑动动画
+
+- 需求：切换周次时增加滚动动画
+- 实现：`AppState` 增加**一次性**的 `_pending_slide`（由 `shift_weeks()` 写入、
+  视图 `take_slide()` 取走即清零）；周视图据此把新网格以 `offset=±1` 起始渲染，
+  再用 `animate_offset` 归零。方向取自 `_pending_slide`，所以向左滑与向右滑
+  新内容从不同侧滑入
+- 参数放在 `config.py`：`PAGE_SLIDE_MS = 260`、`PAGE_SLIDE_SETTLE_DELAY = 0.05`
+- **验证方式**（动画无法靠单张截图判断，这个方法很有效）：
+  1. 在**一次** Playwright 调用内派发点击 + 按 35ms 间隔连续截图，比较各帧指纹
+     → 得到 3 个不同指纹，**确认确实渲染了中间态**（而非直接跳变）
+  2. 另存一张中间帧图片目视确认：网格处于右偏移、左侧露出背景，
+     而导航栏/表头/底部标签位置正常
+  3. 语义树确认已翻到第 2 周（`第 2 周（共 20 周）`、`9月21日 - 9月27日 · 未到`）
+- 踩到的交互坑：`page.mouse.click` 与 `page.mouse` 拖拽**都到不了 Flutter 画布**；
+  而语义节点的 `click` 会被其他语义节点拦截（`intercepts pointer events`）。
+  **可行做法是 `locator.dispatchEvent('click')`** 直接派发事件绕过命中测试
+- 回归：66 项核心自测 + 控件树校验均通过
+- 已知取舍：滑动过程中旧内容位置会短暂露出背景，原因见 8.5
+
+### 第 15 轮 · 两级备注（课程级 + 单节课）
+
+- 需求：单日视图增加备注；创建课程时可输入，单日视图单击可编辑；
+  **创建时输入的作用于该课程的所有上课时间，单日视图里编辑的只作用于这一节课**
+- 两个关键决策（已与用户确认）：
+  1. 两条备注的关系是**并存**而非覆盖 —— 课程级是"这门课的通用说明"，
+     单节级是"这次课的临时补充"，两者在课块上各带标记分行显示
+  2. 交互分工：**单击课块 = 改本节备注，长按课块 = 改课程**
+     （单击是高频动作，长按是低频动作。周视图保持原样：单击 = 改课程）
+- 核心层（不依赖 flet，可独立验证）：
+  - `Course.note`（课程级）；`ScheduleData.notes`（单节级，键 `"YYYY-MM-DD|course_id"`）
+  - 删课程时顺手清掉它名下的单节备注；`normalize()` 再兜一层：
+    丢空值、丢课程已不存在的孤儿键 —— 否则文件里会积一堆永不失效的垃圾
+  - `config.py`：`NOTE_MARK_COURSE="课程"`、`NOTE_MARK_SESSION="本节"`、`MAX_NOTE_LENGTH=200`
+- UI 层：
+  - `ui/note_form.py`（新）：弹层顺便把课程级备注只读展示出来，
+    让用户看清"哪些是这门课本来就带的、哪些是我这次加的"
+  - `ui/course_form.py`：新增「课程备注」多行输入（`_FORM_MAX_HEIGHT` 430→470）
+  - `ui/day_view.py`：`notes=(course.note, session_note)`，单击/长按分别接线
+- **课块行数预算**（这是本轮最容易被忽略的坑）：
+  课块高度固定（由节次决定）、字号又大（第 13 轮刚调到 14pt），
+  备注是第一个"行数不确定"的内容。若不预算行数，内容会溢出容器，
+  字被静默裁掉、看起来像渲染坏了。做法：
+  - 用 `estimated_lines()` 估算课名会占几行（CJK 按全角、西文 0.55 倍字号）
+  - 剩余空间按 12pt×1.3 逐行扣，得出还能放几行
+  - 候选行按重要性排序：摘要 → 备注 → 节次范围
+    （节次范围排最后，因为课块位置与高度本身已经表达了节次）
+  - 单节块（60px 高）只放得下 2 行次要信息，两条备注会被合并成
+    `课程 … / 本节 …` 一行（仍有标记区分）；放得下就各占一行
+- **备注挪进块内右侧的空白列**（看到实际渲染后补做）：
+  单日视图在大屏上课块很宽（632px 窗口下单日块宽 542px），
+  而课名 + 地点只占左侧约 120px，**右侧一大片纯色空白**。
+  于是块宽 ≥ `_SPLIT_MIN_WIDTH`(380) 时改两列：左列 课名/地点教师/节次范围，右列 备注。
+  额外收益：备注不再和课名抢垂直空间，**单节块（60px 高）也能把两条备注分开显示**，
+  不必再合并成一行 —— 上面那套行数取舍只在大屏以下才用得上。
+  窄块（手机竖屏 302px、周视图）仍走纵向堆叠 + 行数预算
+- 验证：
+  - 核心层 7 项：strip、键格式、往返、传空删键、删课连带清理、normalize 清孤儿、超长截断
+  - 行数预算 8 种组合（1/2/4 节 × 有/无备注 × 长课名折行）：估高全部 ≤ 容器高
+  - 控件树校验新增两项：两条备注文案都要出现在课块里；
+    所有单日课块都必须接上 `on_long_press`
+  - 控件树校验再加一项：宽屏（760px）下**所有**课块都得是两列布局，
+    防止以后改布局时悄悄退回"备注堆在课名下面"
+  - 浏览器实测矩阵（每次读落盘 JSON 复核）：仅课程备注 / 仅单节备注 /
+    两条并存（标记与顺序正确）/ 清空课程备注只掉对应那一行 /
+    保存课程表单不会冲掉单节备注 / 跨服务器重启+刷新仍在
+- 教训（写下来避免重复踩）：
+  - **Flutter Web 的输入框用 Playwright `fill()` 注入值不可靠**：
+    DOM 的 `<textarea>` 值与 Flutter 内部编辑态会脱钩（表现为
+    `max_length` 计数与刚输入的内容对不上，偶发保存成空）。
+    要模拟输入必须用 `page.keyboard.type()` 发真实按键事件
+  - 同因：未聚焦的 Flutter 文本框在 DOM 里 `value` 是空的，
+    真实值只画在画布上。**判断输入框内容要看 `max_length` 计数，不要看 DOM value**
+  - `flet run <app_path>` 会把 `FLET_APP_STORAGE_DATA` 指到
+    `<app_path>/.flet/storage/data`，即 `src/.flet/...`。
+    这个目录是运行时数据（会随使用变化），已加入 `.gitignore`
+  - 长按在 Flet Web 的语义树里**没有独立的 DOM 触发点**，
+    自动化点不到；只能靠结构断言确保 `on_long_press` 接上了
+
+### 第 16 轮 · 全文件安全审计（重点看"到安卓上会造成严重后果"的问题）
+
+方法论：把 `src/` 全部读完，再对数据层做**破坏性输入注入**
+（畸形 JSON、错类型字段、极端数值），最后核对 Android 构建产物清单与签名配置。
+只看代码"读起来对不对"查不出这类问题 —— 下面每一条都有实测结果支撑。
+
+#### 已修复（按严重程度排序）
+
+| # | 问题 | 后果（安卓端） | 根因 | 处置 |
+|---|---|---|---|---|
+| **A1** | 数据文件是**合法 JSON 但字段类型错**时 `from_dict` 抛异常 | **应用每次启动都崩在同一处**，用户从界面里无法自救，只能清空应用数据 = 丢掉整个课表 | `load()` 只把 `json.loads` 包在 try 里，`from_dict` 在 try 外 | `load()` 兜住一切异常；坏文件改名 `.corrupt` 留档，并**把原因报到界面** |
+| A1 的 5 个具体触发点（实测全部会崩） | | | | |
+| | `{"courses": 123}` | | `(data.get("courses") or [])` 是数字，`for` 迭代抛 TypeError | 新增 `_as_list()`：只接受 list/tuple |
+| | `{"notes": "abc"}` | | `dict("abc")` 抛 ValueError | 新增 `_as_dict()`：只接受 dict |
+| | `{"settings": {"slot_times": 123}}` | | 同上（`list(123)`） | 同上 |
+| | `{"settings": {"total_weeks": Infinity}}` | | JSON 规范禁止 Infinity，但 **Python 的 json 默认接受**；`int(inf)` 抛 OverflowError | `_as_int()` 补接 OverflowError |
+| **A2** | 结构损坏时"平静地"读成空课表 | 用户看不到任何异常，课表却空了（静默数据丢失） | `from_dict` 对错类型只是回退成空值 | 新增 `_damage_reason()`：顶层/`courses`/`settings`/`notes` 形状不对就按损坏处理（隔离 + 告知）。本应用写出的文件永远满足该形状，不会误伤正常数据 |
+| **A3** | 非法颜色字符串直接交给 Flutter | 课块变透明或渲染报错，用户"看不见课程"且极难排查 | `Course.color` 只判空、不校验格式 | 正则限定 `#RGB/#RRGGBB/#AARRGGBB`，不合规回退默认色 |
+| **A4** | 异常只打到控制台 | 手机上表现为"点了没反应"，用户既不能自救也不能反馈 | 未设置 `page.on_error` | 设 `page.on_error` 把异常变成界面上可见的一行提示；带**次数预算**（3 次）防止"报错处理本身报错"造成无限递归 |
+| **A5** | `parse_weeks("1-999999999")` 展开上亿个值 | 界面卡死 20 秒 → 安卓直接 **ANR**（系统可能杀进程） | `range(low, high+1)` 未夹紧 | 先夹到 `max_weeks` 再展开。实测 19.9s → 0.0000s |
+| **A6** | 减少"每天节数"会**就地压扁课程**且立即落盘 | 12 节改 4 节后，第 5–12 节的课被压到第 4 节，**改回来也恢复不了**（实测：`物理实验 第9-11节 → 第4-4节`） | `Course.normalize` 把 `end_slot` 夹到 `slots_per_day`，而设置页直接保存 | 保存前统计 `end_slot > 新节数` 的课，非空则弹确认框：按超出程度**倒序**列出受影响课程与节次，明确写“永久丢失”“改回来也恢复不了”，操作是「取消 / 仍要保存」（红色）。取消时给提示并让表单回到已保存值，避免“看着像已经改了” —— 否则用户会以为设置生效了 |
+
+A5 目前**没有 UI 入口**（`parse_weeks` 只被工具脚本调用），属潜在问题；
+但它是"以后加个周次文本框输入就立刻变成线上事故"的类型，所以一并修掉。
+
+A6 的验证（浏览器端到端，每次回读落盘 JSON）：
+- 把每天节数改成 4 → 弹层出现，列出 `物理实验（第9-11节）、体育（第9-10节）、数据结构（第5-6节） 等共 5 门`
+- 点「取消」→ 数据零改动（每天节数仍 12、物理实验仍第 9-11 节），并提示"已取消，学期设置未改动"、表单回到 12 行
+- 点「仍要保存」→ 确实落盘为 4 节，5 门课的节次被压到第 4 节（证实了警告里说的不可逆损失）
+
+#### 未修（需要你决策，不是纯技术问题）
+
+| # | 观察 | 影响 | 建议 |
+|---|---|---|---|
+| B1 | **release 包用 debug 签名**（`build.gradle.kts`：`signingConfig = signingConfigs.getByName("debug")`，Flet 模板行为） | 调试密钥是公开的（别名 `androiddebugkey` / 口令 `android`），任何人都能用同一 `applicationId` 签一个"同名更新"覆盖安装；同时无法上架，将来换正式签名必须**卸载重装 = 数据丢失** | 分发前生成正式 keystore，用 `flet build apk --android-signing-key-store ...` 指定 |
+| B2 | 权限里带 `INTERNET` + `ACCESS_NETWORK_STATE` | 纯离线课程表声明联网权限，观感与隐私审查都不友好 | 是 Flet 模板/默认插件的产物；**不建议贸然删** —— Flet 内嵌运行时走 localhost socket，删 INTERNET 有让应用起不来的风险，需真机验证后再动 |
+| B3 | Flet 默认打包了 **16 个用不到的插件**（battery_plus、connectivity_plus、sensors_plus、screen_brightness、wakelock_plus、share_plus、file_picker、url_launcher、pasteboard、device_info_plus、package_info_plus…） | APK 体积、权限与攻击面都被放大（`ACCESS_NETWORK_STATE` 就来自 connectivity_plus） | 可选优化；要裁剪得改 Flet 的 Flutter 模板（`pubspec.yaml` 由模板生成，旁边有 `.orig`） |
+| B4 | 未设 `android:allowBackup`（默认 true） | 课表会被 Android 自动备份上传到用户云备份 | 多数用户希望如此；若要求"数据只留本机"，需自定义清单设 `false` |
+| B6 | `get_data_dir()` 在目录建不出来时**静默**切到临时目录并一直用下去 | 用户会以为课表没了，且之后所有保存都写到临时目录 | 触发条件苛刻（安卓应用私有目录建不出来），但应改成"切换的同时给提示" |
+| B7 | `save()` 落盘后未 fsync 目录 | 仅断电场景下 rename 可能未持久化 | 低危；要极致稳妥可补目录 fsync |
+| B8 | `android:enableOnBackInvokedCallback="true"` 但未处理返回手势 | 若 Flet 未注册回调，返回手势可能出现"点了没反应"（Android 13+ 预测性返回） | **真机验证**：返回手势能否退出/关弹层；不行就把该属性设为 `false` |
+| B9 | 未处理返回键关闭弹层 | 表单填一半按返回会直接退出应用，输入丢失 | 可接 `page.on_keyboard_event`，或后续用 `on_view_pop` |
+
+#### 已验证是安全的（避免重复怀疑）
+
+- **写入原子性**：`mkstemp` + `flush` + `fsync` + `os.replace`，失败清理临时文件 ✅
+- **release 包不可调试**：合并清单里**没有** `android:debuggable` ✅
+- **明文流量**：`targetSdk 34` 且未设 `usesCleartextTraffic` → 默认禁止 ✅
+- **组件暴露面**：`MainActivity` 导出是启动器必需；`taskAffinity=""` 防任务劫持 ✅；
+  两个 `FileProvider` 与 `SharePlusPendingIntent` 均 `exported=false` ✅
+- **无外部存储、无网络请求、无动态代码加载** ✅
+- **未使用 `eval`/`exec`/`pickle`/`subprocess`**，用户输入不进入任何命令或查询 ✅
+- **构建排除**：`pyproject.toml` 的 `exclude` 含 `.flet`，开发数据不会被打进 APK ✅；
+  `.gitignore` 也已忽略 `src/.flet/` ✅
+- **正常数据往返完好**：课程 / 课程级备注 / 单节备注 / 颜色均无损 ✅
+  （66 项自测 + 控件树校验全过）
+
+#### 教训
+
+- **"能解析"不等于"能用"**：本轮最严重的 A1/A2 都发生在 `json.loads` 成功**之后**。
+  只保护解析步骤是错的安全边界；真正的边界应该是"装载数据这件事整体不许失败"。
+- **兜底逻辑必须自己报错**：`load()` 选择重置数据是合理的（总比崩强），
+  但**静默**重置只是把"崩溃"换成了"无声的数据丢失" —— 两者都不可接受。
+  任何自动降级都必须让用户看见。
+- **破坏性输入注入比通读代码有效得多**：A1 的 5 个触发点里，只有 1 个能靠读代码看出来，
+  其余 4 个是跑一遍才暴露的。
+
+#### 收尾：读日志 + 构建脚本 + 密钥泄露
+
+**日志面（都是"无异常"的正面证据）**
+- `flet run` 的 stdout/stderr：跑完全部交互（三个页面、翻周、滚动、开弹层、
+  存备注、存设置）**零 traceback** —— 同时说明 `page.on_error` 兜底从未被触发
+- 浏览器控制台：只有一条 `[log] Flutter app loaded`，
+  **无 error / pageerror / requestfailed，也没有 Flutter 的
+  "A RenderFlex overflowed" 溢出警告** → 课块行数预算与两列布局确实没有溢出
+- 工程内没有任何 `.log` 文件，也没有 `.corrupt` 残留
+
+**`tools/package_android.sh`（开发用，不进 APK，但有能力删掉整个工程）**
+- 发现 footgun：同步分支里有 `rm -rf "$TARGET_DIR"`，而
+  `TARGET_DIR="${BUILD_ROOT:-$HOME/build}/$(basename "$SOURCE_DIR")"`。
+  只要 `BUILD_ROOT` 被指到工程上层（例如 `/mnt/d`），`TARGET_DIR` 就正好等于工程目录，
+  这一步会把**整个工程删掉**。
+- 已加三道护栏并逐项实测通过：
+  ① `TARGET_DIR` 先归一化（`realpath -m`，防 `..` 或多写斜杠绕过判断）
+  ② 与源目录相同 → 拒绝
+  ③ 与源目录互相包含 → 拒绝。**两个方向的后果不同，必须分别拦**：
+  构建目录在源目录内 → rsync 把工程拷进自己的子目录（自我递归）；
+  源目录在构建目录内 → `rm -rf` 会连工程一起删掉。
+  （第一版护栏把第 ③ 条写反了方向，是**跑测试才发现的** —— 没测就上线等于给虚假安全感）
+- 顺带修正脚本头注释：它默认构建的是 **release** 包（只是用 debug 密钥签名），
+  原文写成 "构建 debug APK" 会误导
+- `.gitignore` 补上 `dist/`：脚本会把 APK 拷到那里，与 `build/` 一样不该进版本库
+
+**密钥泄露面**
+- 搜 `*.jks / *.keystore / *.p12 / *.pem / *.key` → **无**
+- 全文搜 `password|secret|token|api_key|PRIVATE KEY` → 唯一命中是构建命令里
+  Java 信任库的口令 `changeit`：它是 Java 出厂默认值，且该信任库只含公开 CA 证书、
+  无任何私钥，因此**不是真正的凭据**
+- ⚠️ 但要记住：将来配正式签名（B1）时，keystore 口令**绝不能**写进
+  `PROGRESS.md`、脚本或命令历史，否则会随仓库一起泄露
+
+### 第 17 轮 · 重新打包 APK（含备注功能 + 两列布局 + 第 16 轮全部修复）
+
+- 触发：上次产物早于字号调整、翻页动画、备注功能与安全修复，需要重打
+- 命令与 9.2 节完全一致（热缓存），耗时 **91 秒**（14:04:08 → 14:05:39，退出码 0）
+- **新产物**：`build/apk/class_schedule.apk`
+  - 52,451,152 字节（50.0 MB）/ 552 个条目
+  - SHA1 `0bd2c0956dfed0194b8d8221c0f97f98f60158c1`
+    （与构建自带的 `.apk.sha1` 逐字一致，两处独立来源互证）
+- **核验结果（全部通过）**
+
+  | 项 | 结果 |
+  |---|---|
+  | `assets/sitepackages.zip` | 4,903,664 B / 564 条目 / **282 个 flet 文件** ✅ |
+  | `assets/app.zip` | 30 条目，含 `core/*.pyc`、`state.pyc`、**`ui/note_form`** ✅ |
+  | 原生库架构 | 仅 `arm64-v8a`（与 `pyproject.toml` 一致）✅ |
+  | 清单 `debuggable` | **未命中**（release 包不可调试）✅ |
+  | 清单权限 | `INTERNET` + `ACCESS_NETWORK_STATE`（Flet 模板 / 插件带入，见第 16 轮 B2/B3） |
+
+- **这次构建仍然传了 `--skip-site-packages`** —— 即"依赖哈希命中，复用上次装好的
+  site-packages"。R27 的教训正是：这个复用一旦与实际状态不符，构建照样报成功、
+  APK 里却没有 flet（装到手机上直接闪退）。**所以每次打包后都必须打开 APK 核验，
+  不能只看 flet 输出的 "Successfully built"**。
+- 为此新增一次性核验脚本 `build/verify_apk.py`（放在 `build/` 下，不进版本库）
+- 脚本自身也踩了坑并已修正 —— **带假警报的核验工具比没有更糟**：
+  - `--compile-packages` 让包内是 `.pyc`，按 `.py` 找会误报"缺关键文件"
+  - APK 里的 `AndroidManifest.xml` 是**二进制 XML**，字符串池用 UTF-16LE 存储，
+    拿 UTF-8 字节去搜必然落空 → 会把"有权限"误报成"没权限"，
+    同时也就**查不出 `debuggable`**（等于安全检查形同虚设）
+- 签名与 `versionCode` 均未变（仍是 debug 签名 / versionCode 1），
+  因此**可以直接覆盖安装**旧版，手机上的课表数据会保留 ✅
+- 待办：把新 APK + `.sha1` 重新上传为 Release 附件（旧附件对应旧 SHA1）
+
+#### 补记：为什么又打了一次（build 2）
+
+用户反馈"装上新 APK 后没有增加新功能"。排查分四部分：
+
+**一、包本身没问题（有证据）**
+- 打开 APK 核验：`assets/app.zip` 里确实有 `ui/note_form.pyc`，
+  而且能从 `ui/settings_view.pyc` 里读出字符串常量 —— 说明打进包的是**新代码**
+- 读插件源码 `serious_python_android/lib/serious_python_android.dart`：
+  它用 `key = 'app:' + versionName+versionCode+lastUpdateTime` 决定是否重新解压，
+  **`lastUpdateTime` 每次重装都变** → 重装必然重新解压。插件注释里还专门写了
+  "只用 versionName+versionCode 会让调试流程一直跑旧代码"。
+  → **排除"装了新包却跑旧代码"这个可能**
+
+**二、真正的缺陷："装的哪个包"无法判断**
+`versionCode` 始终是 1、界面又不显示版本号，导致"装上没有"既不能证实也不能证伪 ——
+你我都只能猜。已修：
+- `config.APP_VERSION` / `config.APP_BUILD`（注释里写明要和 `pyproject.toml` 同步）
+- 设置页底部显示 `版本 0.1.0（build 2）`
+- `pyproject.toml` 的 `build_number` 1 → 2
+
+**三、功能"看不见"是设计使然（需在文档讲清，避免下次再误判）**
+| 功能 | 为何装完看不出 |
+|---|---|
+| 备注 | 周视图刻意未改；单日视图只有课程**真有备注**时才多出 `本节 …` 一行 |
+| 块内两列布局 | 仅当块宽 ≥ `_SPLIT_MIN_WIDTH`(380)。手机竖屏单日块约 302px，**不触发** |
+| 翻页动画 | 需点「上一周/下一周」才可见 |
+| 字号 +2 | 唯一无条件可见的变化，但幅度小，不做并排对比很难察觉 |
+
+→ **验证新包最快的两个办法**：① 设置页看版本号；
+② 单日里**单击课程块**，应弹「本节课备注」而不是「编辑课程」。
+
+**四、重打包踩的坑：R23 复发（重要）**
+改 `build_number` 让 flet 重新生成了 Flutter 工程，**把 `gradle-wrapper.properties`
+的 `distributionUrl` 从腾讯镜像改回了 `services.gradle.org`**。
+wrapper 按 URL 哈希找缓存 → 原站哈希目录里没有完整发行包 → 去下载 224 MB，
+实测 **46 KB/s**（≈1.3 小时），**443 秒后构建失败**。
+
+- 现象识别：栈里出现 `org.gradle.wrapper.Download.downloadInternal`；
+  且 `.gradle-home/wrapper/dists/<版本>/` 下多出一个哈希目录，里面只有 `.part`
+- **处置（比恢复镜像更稳）**：把已下好的完整发行包（zip + 解压目录 + `.zip.ok` 标记）
+  **预置到原站 URL 对应的哈希目录**。这样无论 flet 之后把配置改成什么，
+  wrapper 都能命中缓存，不再依赖镜像，**这个坑不会再复发**
+- 处置后构建 **56 秒**完成（对比失败那次 443 秒）
+- 教训：`pyproject.toml` 一改就可能触发工程重生成，从而重置工程内的构建配置。
+  能放到 `GRADLE_USER_HOME` 或缓存侧的修正就不要留在工程文件里
+
+#### 第 17 轮的最终产物（build 2）
+
+| | |
+|---|---|
+| 路径 | `build/apk/class_schedule.apk` |
+| 大小 | 52,451,464 字节（50.0 MB） |
+| SHA1 | `b5956f157f6c9810327c3accf05f10797f6c18c5` |
+| 条目数 | 552 |
+| `sitepackages.zip` | 4,903,664 B / 564 条目 / 282 个 flet ✅ |
+| `app.zip` | 30 条目，含 `ui/note_form.pyc`，且 `ui/settings_view.pyc` 内有「版本」常量 ✅ |
+| 原生库 | 仅 arm64-v8a ✅ |
+| 清单 `debuggable` | 未命中 ✅ |
+| `versionCode` / `versionName` | 2 / 0.1.0 |
+
+#### 补记二：构建的网络依赖已消除（build 3）
+
+**问题**：打包时 6 个任务 `downloadDartBridge_<abi>` 全部失败：
+
+```
+HttpHostConnectException: Connect to https://github.com:443
+[20.205.243.166] failed: Connection timed out
+```
+
+24 秒快速失败。而同一时刻 WSL 里 `curl https://github.com` 却是 HTTP 200、连接 0.7ms
+—— 两边解析到同一个 IP，行为却相反。
+
+**根因**：WSL 有 `http_proxy=http://127.0.0.1:7892`，**而 Windows 侧的 JVM 默认不走代理**。
+0.7ms 的连接时间本身也说明 WSL 走的是本地代理，不是真实外网往返。
+
+**处置（两处，都是消除依赖而不是绕过症状）**
+1. `SERIOUS_PYTHON_DART_BRIDGE_DIST` → 指向本地已有的
+   `.flet-cache/dart-bridge/v1.9.0`（内含三个 ABI 的 .so，命名符合插件要求）。
+   插件源码 `serious_python_android/android/build.gradle.kts:396-417` 写得很清楚：
+   `if (dartBridgeDist == null) dependsOn("downloadDartBridge_$abi")`
+   —— **有本地目录就根本不注册下载任务**，这条路彻底不需要 github。
+2. `JAVA_TOOL_OPTIONS` 追加 `-Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=7892`，
+   让 Windows 侧 JVM 也走代理，避免其它环节（如 Android 运行时）再撞同一面墙。
+
+**结果**：构建 **26 秒**完成，`downloadDartBridge_*` 零失败。
+
+**这一轮的元教训：不要用 `| tail` 截断构建输出。**
+前两次失败我只看到 "BUILD FAILED"，根因被 `tail` 丢掉了，等于白跑两次。
+这与第 4 轮记的"判断进度看文件系统，不要看日志"是同一类错误的另一面 ——
+**日志要完整留下，再看关键片段。**
+
+#### build 3 产物
+
+| | |
+|---|---|
+| 路径 | `build/apk/class_schedule.apk` |
+| 大小 | 52,451,384 字节（50.0 MB） |
+| SHA1 | `c4306eec34d63d4c68e984b1af1c56e02353ed98` |
+| `versionCode` | 3 |
+| 唯一命名副本 | `class_schedule-v0.1.0-build3-c4306eec.apk` |
+| 核验 | `sitepackages.zip` 282 个 flet ✅；`app.zip` 含 `note_form`，且能从 `core/config.pyc` 读出 `0.1.0`、从 `ui/settings_view.pyc` 读出 `版本` ✅ |
+
+- 版本号从页尾移到**设置页最顶部**（build 2 放在页尾，需要滚动才看得到 —— 实测因此被误判）
+- ⚠️ **`flet build` 每次会清空 `build/apk/`**：手工放的唯一命名副本活不过下一次构建，
+  必须在构建之后生成
+
+#### ⚠️ 未解决：真机安装疑似无效
+
+用户反馈：多次安装后手机仍跑最初版本，**卸载后重装也一样**。
+全新安装不可能装出旧代码，因此怀疑传输环节留了同名旧副本，或从 Release 下载了旧附件。
+
+- 我此前据"APK 内容正确 + 插件会重新解压"就断定"新代码已在手机上运行"，
+  **这个结论是错的**。核验 APK 内容必要但不充分 —— 我从未验证过设备上装的是什么。
+- 现在有了可判定的锚点：装后看「设置」页**顶部**有没有 `版本 0.1.0（build 3）`；
+  或单日里单击课程块，应弹「本节课备注」而不是「编辑课程」。

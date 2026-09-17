@@ -10,6 +10,14 @@ from __future__ import annotations
 
 APP_TITLE = "课程表"
 
+# ---- 版本 ----
+# 必须与 pyproject.toml 的 [tool.flet] build_version / build_number 保持一致。
+# 为什么要显示在界面上：APK 换包后如果 versionCode 不变、界面又不显示版本，
+# 用户就没法判断"我装的到底是哪个包"。实测就撞上过这个坑 ——
+# 重新打包后装上手机看不到新功能，却无法证伪是"装的还是旧包"。
+APP_VERSION = "0.1.0"
+APP_BUILD = 3
+
 # ---- 持久化 ----
 DATA_FILENAME = "schedule.json"
 # 读取失败时把坏文件改名保存，方便事后排查
@@ -67,6 +75,14 @@ COLOR_PALETTE: tuple[str, ...] = (
 
 DEFAULT_COURSE_COLOR = COLOR_PALETTE[0]
 
+# ---- 备注 ----
+# 两种备注并存：课程级（作用于所有上课时间）与单节课级（只作用于某天这节课）。
+# 用不同前缀区分，避免用户看到两行字却分不清哪条是哪条。
+NOTE_MARK_COURSE = "课程"
+NOTE_MARK_SESSION = "本节"
+# 备注长度上限，防止单行文字撑爆布局
+MAX_NOTE_LENGTH = 200
+
 # ---- 布局常量（逻辑像素）----
 CONTENT_PADDING = 10        # 各页面内容区四周留白，宽度计算必须扣掉它
 TIME_COL_WIDTH = 46         # 周视图左侧时间列宽度
@@ -78,6 +94,14 @@ BLOCK_GAP = 2               # 课程块之间留的缝隙，避免贴死
 
 # 手势判定：横向位移超过该值才算翻页，避免和纵向滚动打架
 SWIPE_THRESHOLD = 60.0
+
+# ---- 翻页动画 ----
+# 切换周次时新内容从侧面滑入的时长（毫秒）。
+# 太短显得生硬，太长会拖慢连续翻页的节奏，260ms 是手感上的折中。
+PAGE_SLIDE_MS = 260
+# 起始偏移必须先真正渲染出一帧，否则 Flutter 会把两次变更合并成一次，
+# 动画被静默跳过。这个等待就是留给"首帧送达并绘制"的余量。
+PAGE_SLIDE_SETTLE_DELAY = 0.05
 
 # Flet 尚未完成首帧布局时 page.width 可能为 0，用这个值兜底
 FALLBACK_PAGE_WIDTH = 390.0
