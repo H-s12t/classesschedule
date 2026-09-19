@@ -1,4 +1,4 @@
-#Class Schedule
+# Class Schedule
 
 A simple course schedule tool for managing and viewing personal class schedules.
 
