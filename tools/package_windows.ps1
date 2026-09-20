@@ -41,7 +41,8 @@ try {
         --file-description "Class Schedule" `
         --product-version "0.1.0" `
         --file-version "0.1.0.0" `
-        --yes
+        --yes `
+        --no-rich-output
     if ($LASTEXITCODE -ne 0) {
         throw "Flet portable build failed with exit code: $LASTEXITCODE"
     }
